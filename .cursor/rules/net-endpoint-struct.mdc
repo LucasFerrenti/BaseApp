@@ -1,0 +1,187 @@
+---
+alwaysApply: false
+---
+# Estructura de Endpoint .NET — PetWorkshop
+
+Arquitectura en 4 capas con dependencias unidireccionales:
+
+```
+API  →  Operations  →  DataAcces  →  Entities
+```
+
+---
+
+## 1. Entities (modelos de dominio y enums)
+
+- Namespace: `Entities.Database` para entidades, `Entities.Enums` para enums.
+- Entidades usan `[Key]` en `Id` (tipo `long`), propiedades obligatorias con `required`.
+- Enums usan `[Description("...")]` en cada valor. Se leen con `EnumHelper.GetDescription()`.
+- Errores de negocio se definen como enum (ej. `UserError`) con descripciones legibles.
+
+```csharp
+// Entities/Database/MiEntidad.cs
+public class MiEntidad
+{
+    [Key]
+    public long Id { get; set; }
+    public required string Nombre { get; set; }
+    public string? CampoOpcional { get; set; }
+}
+
+// Entities/Enums/MiError.cs
+public enum MiError
+{
+    [Description("Mensaje legible para el usuario")]
+    CODIGO_ERROR
+}
+```
+
+---
+
+## 2. DataAcces (repositorios y DbContext)
+
+- Namespace: `DataAcces.PostgresDB`, `DataAcces.PostgresDB.Repositories`, `DataAcces.PostgresDB.Repositories.Interfaces`.
+- `PetWorkshopDbContext` hereda de `DbContext`. Cada entidad tiene su `DbSet<T>`.
+- Patrón Repository genérico: `IRepository<T>` → `Repository<T>`.
+- Repositorios específicos heredan del genérico: `IUserRepository : IRepository<User>` → `UserRepository : Repository<User>`.
+- Métodos base: `GetByIdAsync`, `GetAllAsync`, `FindAsync`, `FindAllAsync`, `AddAsync`, `Update`, `Remove`, `SaveChangesAsync`.
+
+```csharp
+// Interfaces/IMiEntidadRepository.cs
+public interface IMiEntidadRepository : IRepository<MiEntidad>
+{
+    Task<MiEntidad?> GetByAlgunCampoAsync(string valor);
+}
+
+// MiEntidadRepository.cs
+public class MiEntidadRepository : Repository<MiEntidad>, IMiEntidadRepository
+{
+    public MiEntidadRepository(PetWorkshopDbContext context) : base(context) { }
+
+    public async Task<MiEntidad?> GetByAlgunCampoAsync(string valor)
+    {
+        return await _dbSet.FirstOrDefaultAsync(e => e.Campo == valor);
+    }
+}
+```
+
+Al agregar nueva entidad: registrar `DbSet<T>` en `PetWorkshopDbContext` y crear migración.
+
+---
+
+## 3. Operations (lógica de negocio)
+
+- Namespace: `Operations.Operative`, `Operations.Operative.Interface`, `Operations.Models`, `Operations.Services`, `Operations.Services.Interfaces`.
+- Clases `*Operative` implementan `I*Operative`. Orquestan repositorios y servicios.
+- El constructor recibe `IConfiguration` y arma un `ServiceCollection` interno para resolver dependencias.
+- Retornan `OperativeResult<T>` con `Success`, `Message`, `Data`, `Errors`.
+- Errores se construyen pasando el enum de error: `new OperativeResult<T>(MiError.CODIGO)`.
+
+```csharp
+// Interface/IMiOperative.cs
+public interface IMiOperative
+{
+    Task<OperativeResult<object>> CrearAlgoAsync(MiEntidad entidad);
+    OperativeResult<MiEntidad> ObtenerAlgo(long id);
+}
+
+// MiOperative.cs
+public class MiOperative : IMiOperative
+{
+    private readonly IMiEntidadRepository _repo;
+
+    public MiOperative(IConfiguration config)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(config);
+        services.AddDbContext<PetWorkshopDbContext>();
+        services.AddScoped<IMiEntidadRepository, MiEntidadRepository>();
+        var sp = services.BuildServiceProvider();
+        _repo = sp.GetRequiredService<IMiEntidadRepository>();
+    }
+
+    public async Task<OperativeResult<object>> CrearAlgoAsync(MiEntidad entidad)
+    {
+        await _repo.AddAsync(entidad);
+        await _repo.SaveChangesAsync();
+        return new OperativeResult<object> { Success = true, Message = "Creado", Errors = new List<string>() };
+    }
+}
+```
+
+### Servicios auxiliares
+
+- `IJwtService` / `JwtService`: genera y valida tokens JWT.
+- `IEmailService` / `EmailService`: envío de emails via SMTP.
+- Patrón: interfaz en `Services/Interfaces/`, implementación en `Services/`.
+
+---
+
+## 4. API (controllers y DTOs)
+
+- Namespace: `API.Controllers.v1`, `API.Models`.
+- Ruta base: `[Route("api/v1/[controller]")]` con `[ApiController]`.
+- Controllers versionados en carpeta `Controllers/v1/`.
+- Inyectan `I*Operative` en el constructor.
+- Respuestas siempre envueltas en `ApiResult<T>` con `Success`, `Message`, `Data`, `Errors`.
+- DTOs usan sufijo `DTO` o `Dto`, con `required` y DataAnnotations (`[Required]`, `[EmailAddress]`, `[MinLength]`).
+- Validación con `ModelState.IsValid` para requests con DataAnnotations.
+
+```csharp
+// Controllers/v1/MiController.cs
+[Route("api/v1/[controller]")]
+[ApiController]
+public class MiController : ControllerBase
+{
+    private readonly IMiOperative _miOperative;
+
+    public MiController(IMiOperative miOperative)
+    {
+        _miOperative = miOperative;
+    }
+
+    [HttpPost("crear")]
+    public async Task<IActionResult> Crear([FromBody] MiRequestDTO request)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(new ApiResult<object>
+            {
+                Success = false,
+                Message = "Datos inválidos",
+                Errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage)
+            });
+
+        var result = await _miOperative.CrearAlgoAsync(/* mapear DTO a entidad */);
+
+        if (result.Success)
+            return Ok(new ApiResult<object> { Success = true, Message = result.Message });
+        else
+            return BadRequest(new ApiResult<object> { Success = false, Message = result.Message, Errors = result.Errors });
+    }
+}
+```
+
+### DTOs de respuesta
+
+- `ApiResult<T>`: wrapper estándar. Constructor vacío o con `UserError` para errores rápidos.
+- DTOs de salida mapean entidades a datos seguros (sin contraseñas). Ej: `UserBasicDTO(User user)`.
+
+---
+
+## 5. Registro de dependencias (Program.cs)
+
+Al agregar un nuevo endpoint completo, registrar en `Program.cs`:
+
+```csharp
+builder.Services.AddScoped<IMiOperative, MiOperative>();
+```
+
+---
+
+## Checklist para nuevo endpoint
+
+1. **Entities**: crear entidad en `Database/` y enum de errores en `Enums/` si aplica.
+2. **DataAcces**: crear `IMiEntidadRepository` + `MiEntidadRepository`. Agregar `DbSet` al `DbContext`. Crear migración.
+3. **Operations**: crear `IMiOperative` + `MiOperative`. Usar `OperativeResult<T>` para retornos.
+4. **API**: crear DTOs en `Models/`. Crear controller en `Controllers/v1/`. Envolver respuestas en `ApiResult<T>`.
+5. **Program.cs**: registrar `AddScoped<IMiOperative, MiOperative>()`.

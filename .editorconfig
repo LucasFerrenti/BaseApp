@@ -1,0 +1,13 @@
+﻿[*.cs]
+
+# CS8618: Un campo que no acepta valores NULL debe contener un valor distinto de NULL al salir del constructor. Considere la posibilidad de agregar el modificador "required" o declararlo como un valor que acepta valores NULL.
+dotnet_diagnostic.CS8618.severity = none
+
+# CS8981: El nombre de tipo solo contiene caracteres ASCII en minúsculas. Estos nombres pueden reservarse para el idioma.
+dotnet_diagnostic.CS8981.severity = none
+
+# CS8603: Posible tipo de valor devuelto de referencia nulo
+dotnet_diagnostic.CS8603.severity = none
+
+# CS8625: No se puede convertir un literal NULL en un tipo de referencia que no acepta valores NULL.
+dotnet_diagnostic.CS8625.severity = none

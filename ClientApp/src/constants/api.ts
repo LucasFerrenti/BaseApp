@@ -1,0 +1,1 @@
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://localhost:7063/api/v1';
