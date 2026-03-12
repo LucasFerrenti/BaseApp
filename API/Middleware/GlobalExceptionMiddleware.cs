@@ -1,4 +1,5 @@
 using API.Models;
+using Entities.Enums;
 using System.Net;
 using System.Text.Json;
 
@@ -33,12 +34,8 @@ namespace API.Middleware
             context.Response.ContentType = "application/json";
             context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
 
-            var response = new ApiResult<object>
-            {
-                Success = false,
-                Message = "Ha ocurrido un error interno en el servidor.",
-                Errors = new List<string> { exception.Message }
-            };
+            var response = new ApiResult<object>(GlobalError.UNEXPECTED_ERROR);
+            response.Errors.Add(exception.Message);
 
             var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
             await context.Response.WriteAsync(JsonSerializer.Serialize(response, options));

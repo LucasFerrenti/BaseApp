@@ -1,12 +1,14 @@
 using API.Middleware;
 using API.Models;
 using DataAcces.PostgresDB;
+using Entities.Enums;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Operations.Operative;
 using Operations.Operative.Interface;
+using Scalar.AspNetCore;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,12 +22,8 @@ builder.Services.AddControllers()
                 .SelectMany(v => v.Errors)
                 .Select(e => e.ErrorMessage);
 
-            var response = new ApiResult<object>
-            {
-                Success = false,
-                Message = "Error de validación.",
-                Errors = errors
-            };
+            var response = new ApiResult<object>(GlobalError.INVALID_DATA);
+            response.Errors.AddRange(errors);
 
             return new BadRequestObjectResult(response);
         };
@@ -75,6 +73,7 @@ app.UseMiddleware<GlobalExceptionMiddleware>();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.MapScalarApiReference();
 }
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();
